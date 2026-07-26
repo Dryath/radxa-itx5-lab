@@ -15,6 +15,11 @@ Everything here is about **getting the most out of the silicon**. No frameworks,
 magic, just the hardware and what it will actually do when you ask nicely (and in the
 right register order).
 
+**Just here to run a model?** Jump to [docs/07](docs/07-running-models.md) for the "run a
+MoE, not a dense model — here's the recipe" short version. The current shape of the board:
+**dense vision on the NPU (3× the CPU, measured), the MoE language model on the CPU, running
+concurrently** — each workload on the hardware it actually wins on.
+
 ## The one-paragraph technical version
 
 The RK3588 NPU is an **NVDLA-derived** 3-core accelerator exposed as a **DRM device**
@@ -39,6 +44,8 @@ CPU/GPU/NPU), not by compute.** The NPU is usually *starved*, not busy.
 | [`docs/04-the-bandwidth-wall.md`](docs/04-the-bandwidth-wall.md) | The bandwidth law, the evidence, and why the answer was a second board |
 | [`docs/05-kernel-and-tuning.md`](docs/05-kernel-and-tuning.md) | The kernel config that matters, and the tuning landmines (looking at you, `isolcpus`) |
 | [`docs/06-the-graveyard.md`](docs/06-the-graveyard.md) | Good ideas that died, and the measurements that killed them |
+| [`docs/07-running-models.md`](docs/07-running-models.md) | **Just want to run an LLM?** Why MoE beats dense, quant advice, the deploy recipe + real tok/s |
+| [`docs/08-vision-and-heterogeneous.md`](docs/08-vision-and-heterogeneous.md) | Vision on the NPU (3× CPU, measured) + running it alongside the CPU LLM |
 
 ## What's in the box
 
