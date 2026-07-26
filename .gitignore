@@ -1,0 +1,16 @@
+# build artifacts
+*.o
+*.so
+*.out
+npu_gemm_test
+membw
+cpu_matmul_bench
+concurrency_probe
+vk_membw
+*.spv
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

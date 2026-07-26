@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kernel-config <config@local>
+Date: Fri, 02 May 2025 00:00:00 +0000
+Subject: [PATCH] arm64: Kconfig: add CMDLINE_EXTEND option
+
+Add the missing CMDLINE_EXTEND choice option to arm64 Kconfig.
+The implementation already exists in drivers/of/fdt.c and
+arch/arm64/kernel/pi/kaslr_early.c -- the Kconfig entry was simply
+never ported from arm32 to arm64.
+
+CMDLINE_EXTEND appends CONFIG_CMDLINE to the bootloader-provided
+command line, enabling kernel-built-in parameters like
+rk_dma_heap_cma=12G without overriding bootloader args.
+
+Install to: ~/bsp_native/linux/rk2410/0100-vendor/
+
+---
+ arch/arm64/Kconfig | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/arch/arm64/Kconfig b/arch/arm64/Kconfig
+index c15f71501..abc876ce1 100644
+--- a/arch/arm64/Kconfig
++++ b/arch/arm64/Kconfig
+@@ -2230,6 +2230,12 @@ config CMDLINE_FROM_BOOTLOADER
+ 	  the boot loader doesn't provide any, the default kernel command
+ 	  string provided in CMDLINE will be used.
+
++config CMDLINE_EXTEND
++	bool "Extend bootloader kernel arguments"
++	help
++	  The command-line arguments provided by the boot loader will be
++	  appended to the default kernel command string.
++
+ config CMDLINE_FORCE
+ 	bool "Always use the default kernel command string"
+ 	help
+--
+2.44.0
