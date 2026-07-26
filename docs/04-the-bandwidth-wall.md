@@ -60,6 +60,8 @@ memory controller — i.e. a second physical board.** That's not a cop-out; it's
 measurements keep pointing at, and it's why the lab ended up a two-board cluster. Sometimes
 the honest optimization is "buy the second Rock 5."
 
+*Which, I have since killed by dropping it. Back to one board.*
+
 ---
 
 Next: [05 — Kernel & tuning](05-kernel-and-tuning.md) — the config that unlocks the levers,
