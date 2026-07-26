@@ -52,15 +52,15 @@ decode, the ioctl/completion path is **70–82% of wall time**.
 
 So the NPU spends most of its life finished-and-idle while the CPU is stuck in a blocking
 wait, coming out of deep idle, eating wakeup latency (p99 is 2–5× p50). This single
-observation drives two of the highest-value levers in the repo:
+observation sent us chasing two things:
 
 1. **Do more work per submit** — batch matmuls so each expensive round-trip carries 32×
-   the payload. That's [M-batching](03-going-fast.md).
-2. **Stop blocking in the kernel** — use a real `FENCE_OUT` fd and busy-poll it instead of
-   `wait_event_timeout`. That needs a kernel option most stock images ship broken; see
-   [05](05-kernel-and-tuning.md). (The mechanism is confirmed working; the end-to-end
-   decode win from it is still a *projection*, not a measurement — we're honest about which
-   is which.)
+   the payload. That's [M-batching](03-going-fast.md), and it's the big win.
+2. **Free the CPU while the NPU works** — a non-blocking `FENCE_OUT` submit hands the CPU
+   back in ~9 µs instead of blocking for the ~280 µs the NPU takes. It works on a `FENCE=y`
+   kernel (measured) — but plot twist: measuring it showed the warm dispatch is
+   *compute-bound*, so it buys **concurrency, not decode speed**. The autopsy is in
+   [05](05-kernel-and-tuning.md).
 
 ---
 

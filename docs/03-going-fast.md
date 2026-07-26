@@ -84,12 +84,14 @@ As a concrete case study, a Qwen3-1.7B decode walked from a **3.2 tok/s** naive 
 M-batched prefill, and A76 pinning — while dropping from 2 IOMMU domains to 1 (half the NPU
 memory). None of these levers is exotic; they're all just "respect the hardware."
 
-## The honest asterisk
+## The honest asterisk (now measured)
 
-One more lever — replacing the kernel's blocking wait with a `FENCE_OUT` busy-poll — is
-**projected at ~3× decode** and the mechanism is confirmed working, but the end-to-end
-decode number has **not** been measured yet. It's in [05](05-kernel-and-tuning.md) under
-"the one that's still a promissory note."
+We *projected* one more lever — a non-blocking `FENCE_OUT` submit instead of the kernel's
+blocking wait — at **~3× decode**. We since measured it, and the projection was wrong in a
+useful way: dispatch turns out to be **compute-bound** (~280 µs NPU vs ~9 µs submit), so
+there's no ioctl-wait to reclaim and decode stays bandwidth-bound. The real, measured payoff
+is **CPU liberation** — run the CPU *while* the NPU computes — not throughput. Full autopsy
+in [05](05-kernel-and-tuning.md).
 
 ---
 

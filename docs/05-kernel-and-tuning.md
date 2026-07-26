@@ -11,14 +11,12 @@ The NPU buffers must go through **DRM GEM**, not DMA-heap. Build the driver in D
 and *every* NPU allocation fails with `errno 22` (`EINVAL`) — from the vendor runtime *and*
 from your own raw-DRM code. If nothing can allocate, check this first.
 
-### `CONFIG_ROCKCHIP_RKNPU_FENCE=y` (needs `SYNC_FILE`) — the reason to run a custom kernel
-Stock `-8`-style images tend to return `FENCE_OUT EINVAL`, which forces every submit onto
-the blocking IRQ path. Since decode is completion-latency bound (the CPU spins 70–82% of
-wall — [01](01-the-interface.md)), a *working* `FENCE_OUT` lets you get a real fence fd and
-**busy-poll** it instead of sleeping in `wait_event_timeout`. We **confirmed the mechanism
-live** (submit returns 0, real fence_fd, `poll` POLLIN, bit-exact result).
-**[projected] ~3× decode** from switching the completion path — but see the promissory-note
-box below; the end-to-end decode win is not yet a measured number.
+### `CONFIG_ROCKCHIP_RKNPU_FENCE=y` (needs `SYNC_FILE`) — worth it, but not for the reason we thought
+Stock `-8`-style images return `FENCE_OUT EINVAL`, forcing every submit onto the blocking
+path. On a kernel with `FENCE=y`, `FENCE_OUT|NONBLOCK` **works [measured]**: the driver
+returns a real dma-fence fd and `poll()` signals `POLLIN` at completion (~0.25 ms), result
+bit-exact. We originally *projected* this would reclaim the ioctl-wait for **~3× decode**.
+It doesn't — and finding out why (below) was the useful part.
 
 ### `PROC_FS` / `DEBUG_FS` on
 For NPU load/monitoring visibility. Cheap, worth it.
@@ -43,7 +41,7 @@ resident. Don't expect a speedup from a bigger pool.
 |---:|---|---|
 | 1 | **Pin to A76 (cores 4–7)** | +53% decode ([03](03-going-fast.md)) |
 | 2 | **int8 dispatch** | +70–87% ([03](03-going-fast.md)) |
-| 3 | **FENCE busy-poll + shallow idle** | ~3× decode **[projected]** |
+| 3 | **FENCE_OUT non-blocking submit** | *not* decode throughput — **CPU liberation** (measured; see below) |
 | 4 | **Governors → performance** (esp. `dmc`) | first-token-after-idle only; without it the DDR idles down to 534 MHz |
 | 5 | DDR overclock | ~+14% theoretical, muted in practice; not worth the risk (see [06](06-the-graveyard.md)) |
 | 6 | THP (transparent hugepages) | **inert** here — 0 huge pages materialized under `defer+madvise` without an explicit `madvise(MADV_HUGEPAGE)` in code |
@@ -68,12 +66,25 @@ Rules if you touch `isolcpus`:
 Honestly? The +3–4% usually isn't worth the risk. Pinning ([03](03-going-fast.md)) gets you
 most of it safely.
 
-## The promissory-note box
+## The ~3× that wasn't (a measured correction)
 
-The `FENCE_OUT` busy-poll is the biggest *unrealized* win in the repo. The mechanism is
-confirmed; the ~3× is an extrapolation from where the time goes (70–82% in the completion
-path), not a measured decode delta. If you build on this, **measure the end-to-end tok/s**
-before quoting a number — and please send it back, we'd love to know.
+We projected that a working `FENCE_OUT` (non-blocking submit + poll, instead of sleeping in
+the kernel) would net **~3× decode** — on the theory that the ioctl/completion wait was the
+dominant cost. Then we measured a warm TP3 dispatch and decomposed it:
+
+| part | µs |
+|---|---:|
+| CPU-side submit | ~9 |
+| NPU compute (poll → completion) | ~280 |
+
+The ~280 µs is **NPU compute**; the submit is only ~9 µs. **Dispatch is compute-bound, not
+wait-bound** — there's no big ioctl-wait left to reclaim in the warm regime, so the ~3×
+never shows up. Decode stays [bandwidth-bound](04-the-bandwidth-wall.md).
+
+What `FENCE_OUT|NONBLOCK` *is* good for, measured: **CPU liberation.** The non-blocking
+submit hands the CPU back in ~9 µs while the NPU spends ~280 µs computing — so you can run a
+CPU workload *while* the NPU runs (real non-blocking concurrency). A genuine win, just a
+different one than we expected. Lesson, again: measure before you trust your own projection.
 
 ---
 
