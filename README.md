@@ -46,6 +46,7 @@ CPU/GPU/NPU), not by compute.** The NPU is usually *starved*, not busy.
 | [`docs/06-the-graveyard.md`](docs/06-the-graveyard.md) | Good ideas that died, and the measurements that killed them |
 | [`docs/07-running-models.md`](docs/07-running-models.md) | **Just want to run an LLM?** Why MoE beats dense, quant advice, the deploy recipe + real tok/s |
 | [`docs/08-vision-and-heterogeneous.md`](docs/08-vision-and-heterogeneous.md) | Vision on the NPU (3× CPU, measured) + running it alongside the CPU LLM |
+| [`docs/09-multimodal-grafting.md`](docs/09-multimodal-grafting.md) | **(exploratory)** Where this thinking leads: a CfC "connective tissue" binding frozen models into associative memory — evocation, not generation |
 
 ## What's in the box
 
