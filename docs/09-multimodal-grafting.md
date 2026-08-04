@@ -100,26 +100,96 @@ synthetic patterns. Chance ≈ 0.016.
 
 This section is the point. The honesty is the credibility.
 
-- **Does shared structure turn N bindings into a map that generalises?** **Early yes — at reduced
-  width:** concepts *never trained* retrieve their cross-modal partners at **6.3× chance
-  (p ≈ 3e-10)**, while an IID control sits exactly at chance and an untrained net gets nothing free.
-  So "capacity" stops being *how many bindings fit* and becomes *how good is the map*. **⚠ Not yet
-  shown at production width** — re-test pending the sparsity re-tune.
+- **★ Does shared structure turn N bindings into a map that generalises? Yes — shown at production
+  width and replicated.** At `K=2048`, with 16 of 64 concepts *never trained*, held-out retrieval is
+  **33× chance (p ≈ 1.5e-32, 3 seeds)** and reaches ~79% of trained performance; an IID control sits
+  at chance, an untrained net gets nothing free. **Capacity stops being *how many bindings fit* and
+  becomes *how good is the map*** — vocabulary does not scale as N bindings.
+  (An earlier "no generalisation at this width" reading was **retracted** — an artifact of the
+  sparsity value in use. Generalisation vs sparsity is **U-shaped**: sparse coding lets concepts
+  *tile* while the shared transformation generalises, heavy oversubscription forces *sharing*, and
+  there's a dead spot between the two mechanisms. The old number was measuring the dead spot.)
 
 - **Is it imagery, or only recognition?** It splits. On IID inputs it's **recognition, not imagery**:
   retrieval rank is excellent (~53× chance) but the evoked vector's cosine to the true target is only
   ~0.31 — and it's *not a precision problem* (fp64 gives the same as int8). With **correlated** inputs
   the cosine jumps to **~0.92** (imagery-grade). **Input structure is the only thing that has ever
-  moved this number — and it's exactly what real encoders supply for free.** Two consequences worth
-  holding: sparsity and imagery are roughly independent over the useful range; and imagery vs
-  discrimination look close to *opposed* axes (correlation buys one, costs the other). Whether that
-  trade is a law or an untuned regime is **open, and it's the central question now.**
+  moved this number — and it's exactly what real encoders supply for free.** The trade is now mapped:
+  **retention and imagery have opposed optima** (retention peaks at very sparse coding, imagery about
+  an order of magnitude denser) — but **generalisation survives at the imagery optimum**, so near-peak
+  imagery *and* solid held-out generalisation are available together, paid for in trained retention.
+  **Which sparsity to sit on is a product decision, not a measurement.**
+
+- **⚠ Honesty caveat: "cos 0.92" is not "distinguishable."** That cosine is a *mean* over competitors;
+  top-1 identification depends on the *max*, and the two diverged ~7× at high density (a state
+  0.99-aligned to "cat" is also ~0.98-aligned to "lynx"). Read every cosine here as *"the evoked state
+  is well-aligned to its target,"* never as *"telling it apart from its neighbours."* For imagery
+  that's arguably fine; for discrimination it's a different number.
+
+- **Sparsity is a *three-way* trade, not two.** Past retention-vs-imagery there's **damage tolerance**:
+  very sparse coding means a lost unit kills *few* memories but kills them *completely*; denser coding
+  degrades gracefully. Small sparsity is good for capacity and generalisation, bad for robustness. One
+  knob, three masters.
 
 - **Still unshown: that an evoked buffer decodes to anything.** A high cosine is necessary for
   imagery, not proof of it. That needs the buffer partition (next) and a decoder round-trip.
 
 - **Nothing has run on real encoder embeddings yet.** Every pattern to date is synthetic.
-- **The episodic store doesn't exist yet.** Described, unbuilt.
+
+- **Episodic binding: now *measured*, and the recurrence doesn't supply it.** This moved from
+  "unbuilt" to a finding. The recurrence builds a **semantic** store (retrieval generalises across
+  contexts), not an **episodic** one (recall conditioned on the surround it was laid down in):
+  predecessor identity doesn't change what's retrieved at any depth tested — TOST-equivalent to
+  no-effect at a ±0.05 margin. (An earlier "context sensitivity" result was **retracted** — it was
+  stream *position*, which decodes at ~0.84 and is genuinely distributed, not content.) So a separate
+  **episodic store is now the *only* source of episodic binding** in the design; its priority went up,
+  and we now know exactly what it has to do that the bank structurally can't. Still unbuilt.
+
+## Silicon affordances — run the discriminator both ways
+
+Most of this note is about constraints the silicon *imposes*. The flip side is the sharpest form of
+"build for the silicon, not the model": **before importing a mechanism from biology, check whether the
+hardware even has the constraint that mechanism exists to solve.** Biological solutions are answers to
+biological problems. Two fail the test immediately — **neurogenesis** (brains grow neurons partly
+because there's no other way to add capacity; here you just reallocate width or rebuild from a
+checkpoint) and **critical periods** (they exist because plasticity is irreversible; here it isn't).
+Importing either would be solving a problem the hardware doesn't have — the same error as cargo-culting
+an architecture, pointed the other way.
+
+Run the discriminator the *other* direction and the hardware hands you things no brain gets:
+
+- **★ Rollback inverts the stability/plasticity trade — the biggest affordance.** Biology is
+  conservative because LTP can't be undone: one bad consolidation is permanent, so evolution buys
+  safety with rigidity. But with **atomic checkpoints + a reference probe**, consolidation becomes
+  *speculative*: snapshot → fold aggressively → re-score → keep or revert. An aggressive learning rate
+  stops being a risk; run several folds, keep the best. **The consolidation rate stops being a fixed
+  parameter and becomes something you *measure*.** No organism can try a memory and take it back.
+  (⚠ It catches catastrophic single steps well and slow accumulation poorly — so pair the expensive
+  periodic probe with cheap signals computed *free* during consolidation, and revert on either.)
+
+- **You can read your own weights — and there are two confidences, not one.** *Structural* ("how
+  well-claimed are the units this concept uses?") and *momentary* ("is *this* inference right?", from
+  the margin/entropy of the similarity distribution) are different states that should drive different
+  behaviour — "I know this well but I'm not sure that's what I'm seeing" should widen attention, not
+  trigger learning. Both quantities already exist; both were being discarded. Paired with rollback, the
+  real capability is **running experiments on itself** — try a rule, score it, revert.
+
+- **Byte-exact episodes make confabulation *computable*.** Biological episodic memory is
+  reconstructive, which is *why* confabulation exists — no ground truth to check against. Here the
+  stored episode is exact, so provenance stops being a tag you trust and becomes a **diff**: replay the
+  episode, compare to what the bank now evokes, measure the divergence. And the sharp part — that
+  divergence is **schema formation and distortion at the same time**: drift toward the prototype is
+  exactly what makes a concept general *and* exactly what makes a memory wrong about its particulars.
+  Same number, opposite value depending on what you wanted — and you can keep both the episode as
+  recorded and the schema as consolidated, with the gap visible. Human memory can't separate those,
+  which is why the distortion is invisible from the inside.
+
+One correction fell out of this, worth stating because it *relocated an intervention*: **the loss is
+neither at encoding nor at readout.** The expansion transform is orthonormal (invertible — destroys
+nothing), and the forward pass is *dense* (the sparsity step runs only during consolidation, never at
+evocation), so there was never a "read from the pre-sparsity state" fix to be had — the dense state is
+all there ever was. What sparsity does is shape **what the weights come to encode**. So the knob to
+turn is the *recruitment rule*, not the readout.
 
 ## The one architectural change it needs — and it's free
 
@@ -330,8 +400,11 @@ nothing → it never was. A far harder test than cosine, and it needs no human l
 
 ## Open questions, in priority order
 
-*Measurement (partly answered, needs the sparsity re-tune):* imagery vs recognition at production
-width; whether shared structure generalises at production width; bracket the sparsity optimum.
+*Measurement (much of it now answered):* generalisation at production width — **done** (33× chance,
+replicated); imagery vs recognition — **mapped** (input structure moves it; opposed optima, with
+generalisation surviving at the imagery optimum). Still open: **bracket the sparsity optimum on real
+inputs**, and confirm the emerging **compositional recombination** result (reading unseen inputs by
+recombining learned parts) past its pre-registration before it's quoted as more than promising.
 
 *Structural — what separates a routing machine from something that undergoes things:* carry state
 across perceptions (cheapest, gates everything temporal); the buffer partition + unclamped evocation;
