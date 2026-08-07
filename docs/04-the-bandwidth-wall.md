@@ -57,10 +57,13 @@ per-byte dequant work. Bandwidth is the ceiling; it isn't the *only* thing.
 
 If one board's bandwidth is the wall, the only way to add *aggregate* bandwidth is **another
 memory controller — i.e. a second physical board.** That's not a cop-out; it's what the
-measurements keep pointing at, and it's why the lab ended up a two-board cluster. Sometimes
-the honest optimization is "buy the second Rock 5."
+measurements keep pointing at, and for a while the lab ran a two-board cluster on exactly that
+logic. Sometimes the honest optimization is "buy the second Rock 5."
 
-*Which, I have since killed by dropping it. Back to one board.*
+**Epilogue: we went back to one board.** The cluster is the right answer *only* if you genuinely
+need aggregate bandwidth across boards — and running two of them has its own costs (not least
+that boards break; ours did). For a single well-scoped workload, one tuned board is what you
+actually want to run. The physics stands; the cluster just didn't earn its keep here.
 
 ---
 
