@@ -61,8 +61,9 @@ measurements keep pointing at, and for a while the lab ran a two-board cluster o
 logic. Sometimes the honest optimization is "buy the second Rock 5."
 
 **Epilogue: we went back to one board.** The cluster is the right answer *only* if you genuinely
-need aggregate bandwidth across boards — and running two of them has its own costs (not least
-that boards break; ours did). For a single well-scoped workload, one tuned board is what you
+need aggregate bandwidth across boards — and running two of them has its own costs (more hardware
+to look after; in our case one board's run ended when **I dropped it** — operator error, full
+stop, no fault of the board). For a single well-scoped workload, one tuned board is what you
 actually want to run. The physics stands; the cluster just didn't earn its keep here.
 
 ---

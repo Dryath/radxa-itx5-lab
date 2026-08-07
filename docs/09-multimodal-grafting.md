@@ -145,6 +145,28 @@ This section is the point. The honesty is the credibility.
   **episodic store is now the *only* source of episodic binding** in the design; its priority went up,
   and we now know exactly what it has to do that the bank structurally can't. Still unbuilt.
 
+## Fresh results — promising, still under active test
+
+These landed recently and are still being hammered on (the substrate work runs a fast
+experiment-and-audit loop, and same-week retractions happen — so treat these as **strong signals,
+not final numbers**, newer and less-audited than the core measured section above):
+
+- **★ The recurrence carries order, not just static bindings.** Sequence/order recall works: cued
+  for position, it recovers order at **0.75–0.93 vs 0.083 chance**, ~80% retained across
+  interference — and forced-choice order tests show behaviour that depends on the *order* of inputs,
+  not just their content. So the bank isn't only associative lookup; it holds sequence.
+- **★★ It stays coherent over the long run.** A **10,000-exposure** continuous run kept the state
+  magnitude bounded, drift linear (not runaway), and retrieval pinned. Early but direct evidence on
+  the open "does an unclamped roll stay coherent long enough to be a *dream*, not a *drift*?" — so
+  far, it doesn't drift off.
+- **Composition scales with buffer width.** Reading *unseen* inputs by recombining learned parts
+  improves as the buffer widens — the bottleneck is buffer width, not the association slice — which
+  points to compositionality being a real architectural property rather than a small-case fluke.
+  (Previously parked as "emerging"; promoted to *promising, still testing*.)
+
+⚠ None of these has been through as many audit passes as the core section. Quote them **with** the
+caveat, or wait for the next update.
+
 ## Silicon affordances — run the discriminator both ways
 
 Most of this note is about constraints the silicon *imposes*. The flip side is the sharpest form of
@@ -403,8 +425,8 @@ nothing → it never was. A far harder test than cosine, and it needs no human l
 *Measurement (much of it now answered):* generalisation at production width — **done** (33× chance,
 replicated); imagery vs recognition — **mapped** (input structure moves it; opposed optima, with
 generalisation surviving at the imagery optimum). Still open: **bracket the sparsity optimum on real
-inputs**, and confirm the emerging **compositional recombination** result (reading unseen inputs by
-recombining learned parts) past its pre-registration before it's quoted as more than promising.
+inputs**, and keep hardening the fresh results above (order recall, long-run stability, composition)
+through more audit passes before they graduate from *promising* to *settled*.
 
 *Structural — what separates a routing machine from something that undergoes things:* carry state
 across perceptions (cheapest, gates everything temporal); the buffer partition + unclamped evocation;
