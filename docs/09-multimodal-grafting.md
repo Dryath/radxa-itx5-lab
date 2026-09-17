@@ -1,9 +1,14 @@
 # 09 — Multimodal grafting: connective tissue on the silicon
 
-> **Status: early, exploratory, and honest.** This is a design note, not a result paper. The
-> thesis is firm; a lot of the numbers are regime-dependent and flagged as such. Where a value
-> would be a recipe, it's held back — partly discretion, mostly because our own measurements say
-> it isn't bracketed yet. Read the ⚠ lines as seriously as the ★ ones.
+> **Status: an UNBUILT research substrate. Read this as a lab notebook, not a result.**
+> Every positive number below is a **numpy substrate probe** — synthetic patterns, never real
+> encoder embeddings, and **nothing has run end-to-end on the NPU.** The whole thing exists to
+> give a model with *no native multimodal tower* a way to bind modalities at all; a model that
+> already ships vision/audio projectors does not need any of this — skip it. And the biggest gap
+> is the one thing not yet touched: **time.** Everything here binds *static* patterns; persistent
+> state and sequence are untested — the substrate's own notes call that "the real gap." Where a
+> value would be a recipe it's held back, partly discretion and mostly because the measurements
+> say it isn't bracketed. Read the ⚠ lines as seriously as the ★ ones.
 
 Everywhere else in this repo the lesson was **build for the silicon, not the model** — pick the
 architecture the RK3588 actually rewards ([07](07-running-models.md), [08](08-vision-and-heterogeneous.md)).

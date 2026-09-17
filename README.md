@@ -35,6 +35,11 @@ CPU/GPU/NPU), not by compute.** The NPU is usually *starved*, not busy.
 
 ## Start here
 
+**The lab's one rule:** [`METHOD.md`](METHOD.md) — *we fit the model to the hardware, not the
+hardware to the model.* Everything below is what happens when you actually follow it.
+
+### The foundation — cracking the NPU open
+
 | Doc | What's in it |
 |---|---|
 | [`docs/00-the-hardware.md`](docs/00-the-hardware.md) | The RK3588 NPU, its NVDLA heritage, the 3 cores, and the two walls (bandwidth + IOMMU) |
@@ -46,7 +51,17 @@ CPU/GPU/NPU), not by compute.** The NPU is usually *starved*, not busy.
 | [`docs/06-the-graveyard.md`](docs/06-the-graveyard.md) | Good ideas that died, and the measurements that killed them |
 | [`docs/07-running-models.md`](docs/07-running-models.md) | **Just want to run an LLM?** Why MoE beats dense, quant advice, the deploy recipe + real tok/s |
 | [`docs/08-vision-and-heterogeneous.md`](docs/08-vision-and-heterogeneous.md) | Vision on the NPU (3× CPU, measured) + running it alongside the CPU LLM |
-| [`docs/09-multimodal-grafting.md`](docs/09-multimodal-grafting.md) | **(exploratory)** Where this thinking leads: a CfC "connective tissue" binding frozen models into associative memory — evocation, not generation |
+| [`docs/09-multimodal-grafting.md`](docs/09-multimodal-grafting.md) | **(exploratory, unbuilt)** A research substrate — associative-memory "connective tissue" for a model with no native multimodal tower. Numpy probes only; read as a notebook |
+
+### Running real workloads
+
+| Doc | What's in it |
+|---|---|
+| [`docs/10-the-npu-backend.md`](docs/10-the-npu-backend.md) | Real LLMs on the NPU via the RKNPU2 llama.cpp backend (**@invisiofficial**'s work) — MoE experts on the NPU **9.7×**, the quant-eligibility rule, cross-board tensor parallelism, and the figures we withdrew |
+| [`docs/11-linear-attention-serving.md`](docs/11-linear-attention-serving.md) | The CPU side: linear-attention MoE serving patches — grouped MoE gemm **+18–39% prefill**, in-place SSM state, sliding-window attention **2.34× at 64K**, the router affinity fix |
+| [`docs/12-agent-memory.md`](docs/12-agent-memory.md) | On-device agent memory shaped by the hardware: the two-tier (semantic/episodic) split, write-by-consequence, consolidation as a nightly idle job, perception discipline |
+| [`docs/13-the-appliance.md`](docs/13-the-appliance.md) | The whole board as a LAN LLM node: memory-guarded model swaps, on-NPU OCR, choosing the main model by bake-off |
+| [`docs/14-cartridges.md`](docs/14-cartridges.md) | **(direction)** One small resident base + hot-swappable per-domain LoRA "cartridges" — operators, not operands |
 
 ## What's in the box
 
@@ -89,3 +104,9 @@ None of this started from zero — see [`CREDITS.md`](CREDITS.md) for the people
 this territory first: **Jasbir Matharu** (`rk3588-npu`), **allbilly** (`npu` / `ops_reg`),
 **Martin Chang** (NVDLA LUT analysis), the **NVDLA** project itself, **ggml**, and the
 **Panfrost/Asahi** crews whose accelerator-RE playbook we shamelessly borrowed.
+
+The "running real workloads" docs stand on more shoulders still — **[@invisiofficial](https://github.com/invisiofficial)**'s
+RKNPU2 llama.cpp backend (*the* reason an LLM runs on this NPU at all),
+**[Mojo24x7](https://github.com/Mojo24x7/rk-llama.cpp)**'s rebase of it onto current llama.cpp,
+**inclusionAI**'s Ring-mini-linear architecture, and **llama.cpp** itself. Full credit and
+links in [`CREDITS.md`](CREDITS.md).

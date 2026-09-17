@@ -27,6 +27,22 @@ is useful."
 - The batch ceiling is set by your *largest* K. The FFN down-projection (K=6144) is the
   worst offender and caps model-wide M at ~32 (less on bigger models).
 
+**Update — the ceiling is a budget, and M goes much higher than 32.** The "M=32" above was the
+conservative read at large K. The real governing constraint is a single **CBUF feature budget:
+`K·M ≤ 327,680`** (10 banks × 32 KB) — and it predicts the exact M-cliff (at K=3072, M=96 passes
+and M=112 fails). So at the production shape **K=2048 the usable range is M ∈ [112, 160]**, an
+order of magnitude past 32. Two things fall out of measuring it properly:
+
+- **M beats K at equal budget.** (2048, 144) hits **77.2% of peak**; (3072, 96) — same budget —
+  only 54.9%. Wider batch, not deeper K.
+- **The arithmetic-intensity floor is 112 MACs/weight-byte** (2.67 GMAC/ms ÷ 23.8 GB/s), which
+  is *why* usable M starts at ~112 — below that you're bandwidth-starved, not compute-fed.
+
+**The shape locks at K=2048, M=144, N ≥ 4608** (~76% of peak in a single dispatch), int8 with a
+Hadamard transform. A cost model this clean — predicted 1696 µs at K=3072/N=9216/M=160, measured
+**1695 µs** — means you can *choose* the shape before you run it. (One oddity worth knowing: M=128
+is anomalously bad; M=144 recovers. Don't assume monotonic.)
+
 ## Lever 2 — 3-core tensor parallelism (TP3)
 
 Cycle `core_mask` `0x1 → 0x2 → 0x4` across three single-core SUBMITs; they run in parallel.

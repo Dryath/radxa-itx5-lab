@@ -47,6 +47,24 @@ issue and it's done.*
 - **Mesa / Panfrost** ([freedesktop](https://gitlab.freedesktop.org/mesa/mesa)) — the Mali
   G610 userspace, relevant to the GPU-bandwidth benchmarking here.
 
+## The LLM-serving work (docs 10–14) stands on
+
+- **@invisiofficial** — [`github.com/invisiofficial/rk-llama.cpp`](https://github.com/invisiofficial/rk-llama.cpp).
+  **The RKNPU2 NPU backend itself** — the backend, quantisation support, the hardware pipelines
+  and hybrid quantisation, IOMMU domain management, the caching system, the environment-variable
+  surface. Upstream llama.cpp has *no* Rockchip NPU backend; without this, docs 10 and 13 would
+  not exist. Contributors credited in that project: **@Polarnik** (zero-copy weights, weight
+  pre-packing), **@hvalev**, **Gerald Tan** ([@woefulwabbit](https://github.com/woefulwabbit),
+  cross-compilation), **Martino Mensio** ([@MartinoMensio](https://github.com/MartinoMensio), build fixes).
+- **Mojo24x7** — [`github.com/Mojo24x7/rk-llama.cpp`](https://github.com/Mojo24x7/rk-llama.cpp).
+  Carries @invisiofficial's backend onto a *current* llama.cpp master (it had been stuck on a
+  May-2026 base) — the tree the serving experiments here sit on top of. **@danielferr85**
+  independently rebased the same backend and identified which backend-interface slots had changed.
+- **inclusionAI** — the **Ring-mini-linear-2.0 / `bailingmoe2`** architecture (Lightning-Attention-2
+  linear attention + MoE) that [`docs/11`](docs/11-linear-attention-serving.md) wires into llama.cpp.
+- **Georgi Gerganov & the ggml / llama.cpp community** — the parent project beneath all of the
+  serving work, thanked above for GGUF/ggml as well.
+
 ## On borrowed headers
 
 The examples in `tools/` reference reverse-engineered NPU register/hardware headers
