@@ -1,0 +1,19 @@
+diff --git a/common/speculative.cpp b/common/speculative.cpp
+index b7811b8..6de7ca5 100644
+--- a/common/speculative.cpp
++++ b/common/speculative.cpp
+@@ -105,7 +105,13 @@ static bool common_speculative_are_compatible(
+             ? n_vocab_tgt - n_vocab_dft
+             : n_vocab_dft - n_vocab_tgt;
+ 
+-        if (vocab_diff > SPEC_VOCAB_MAX_SIZE_DIFFERENCE) {
++        // A draft vocabulary that is a strict prefix of the target vocabulary is safe,
++        // however much smaller it is: the loop below verifies that every shared id has
++        // identical text, so every id the drafter can emit means the same thing to the
++        // target. It simply cannot propose ids above its own range, which costs
++        // acceptance rate, never correctness. Only a draft vocab LARGER than the
++        // target is dangerous, because those ids have no meaning in the target.
++        if (n_vocab_dft > n_vocab_tgt && vocab_diff > SPEC_VOCAB_MAX_SIZE_DIFFERENCE) {
+             SPC_DBG("draft model vocab must closely match target model to use speculation but "
+                     "target vocab size %d does not match draft vocab size %d - difference %d, max allowed %d\n",
+                     n_vocab_tgt, llama_vocab_n_tokens(vocab_dft), vocab_diff, SPEC_VOCAB_MAX_SIZE_DIFFERENCE);

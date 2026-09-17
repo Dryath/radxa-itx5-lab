@@ -1,0 +1,108 @@
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index fe068d3..a46e858 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -36,6 +36,68 @@
+ #include <windows.h>
+ #endif
+ 
++using json = nlohmann::ordered_json;
++
++// [LOCAL PATCH] persist context checkpoints alongside slot save files.
++// Hybrid/recurrent models cannot rewind their recurrent state, so prompt reuse
++// after a slot restore depends entirely on the checkpoint stack — which the
++// upstream save format does not serialize (restore then always falls into the
++// "forcing full prompt re-processing" branch). Sidecar file: "<state file>.ckpt".
++// The blobs are only valid for the same model/ctx configuration, same trust
++// level as the main state file.
++static constexpr uint32_t SLOT_CKPT_MAGIC   = 0x504b4353; // "SCKP"
++static constexpr uint32_t SLOT_CKPT_VERSION = 1;
++
++static bool slot_checkpoints_save(const std::string & path, const std::list<common_prompt_checkpoint> & ckpts) {
++    std::ofstream f(path, std::ios::binary | std::ios::trunc);
++    if (!f) {
++        return false;
++    }
++    auto w = [&f](const void * p, size_t n) { f.write((const char *) p, n); };
++    const uint32_t count = ckpts.size();
++    w(&SLOT_CKPT_MAGIC, 4); w(&SLOT_CKPT_VERSION, 4); w(&count, 4);
++    for (const auto & c : ckpts) {
++        w(&c.n_tokens, 8); w(&c.pos_min, 4); w(&c.pos_max, 4);
++        for (const auto * v : { &c.data_tgt, &c.data_dft, &c.data_spec }) {
++            const uint64_t n = v->size();
++            w(&n, 8); w(v->data(), n);
++        }
++    }
++    return f.good();
++}
++
++static bool slot_checkpoints_load(const std::string & path, std::list<common_prompt_checkpoint> & ckpts) {
++    std::ifstream f(path, std::ios::binary);
++    if (!f) {
++        return false; // no sidecar — behave exactly as upstream
++    }
++    auto r = [&f](void * p, size_t n) { f.read((char *) p, n); };
++    uint32_t magic = 0, version = 0, count = 0;
++    r(&magic, 4); r(&version, 4); r(&count, 4);
++    if (!f.good() || magic != SLOT_CKPT_MAGIC || version != SLOT_CKPT_VERSION || count > 1024) {
++        return false;
++    }
++    std::list<common_prompt_checkpoint> loaded;
++    for (uint32_t i = 0; i < count; i++) {
++        auto & c = loaded.emplace_back();
++        r(&c.n_tokens, 8); r(&c.pos_min, 4); r(&c.pos_max, 4);
++        for (auto * v : { &c.data_tgt, &c.data_dft, &c.data_spec }) {
++            uint64_t n = 0;
++            r(&n, 8);
++            if (!f.good() || n > (1ull << 34)) {
++                return false;
++            }
++            v->resize(n);
++            r(v->data(), n);
++        }
++        if (!f.good()) {
++            return false;
++        }
++    }
++    ckpts = std::move(loaded);
++    return true;
++}
++
+ constexpr int HTTP_POLLING_SECONDS = 1;
+ 
+ static common_speculative_output_limits server_output_limits(const common_params & params) {
+@@ -2579,6 +2641,17 @@ private:
+                         break;
+                     }
+ 
++                    // [LOCAL PATCH] always (re)write the checkpoint sidecar, even when the
++                    // stack is empty — a stale sidecar from an earlier save must not survive
++                    if (nwrite > 0) {
++                        const std::string ckpt_path = filepath + ".ckpt";
++                        if (slot_checkpoints_save(ckpt_path, slot->prompt.checkpoints)) {
++                            SLT_INF(*slot, "saved %zu context checkpoint(s) -> %s\n", slot->prompt.checkpoints.size(), ckpt_path.c_str());
++                        } else {
++                            SLT_WRN(*slot, "failed to write checkpoint sidecar %s\n", ckpt_path.c_str());
++                        }
++                    }
++
+                     const int64_t t_end = ggml_time_us();
+                     const double t_save_ms = (t_end - t_start) / 1000.0;
+ 
+@@ -2644,6 +2717,16 @@ private:
+                         break;
+                     }
+ 
++                    // [LOCAL PATCH] restore the checkpoint stack from the sidecar so
++                    // hybrid/recurrent models can rewind to end-of-prompt instead of
++                    // being forced into full re-processing
++                    {
++                        const std::string ckpt_path = filepath + ".ckpt";
++                        if (slot_checkpoints_load(ckpt_path, slot->prompt.checkpoints)) {
++                            SLT_INF(*slot, "restored %zu context checkpoint(s) from %s\n", slot->prompt.checkpoints.size(), ckpt_path.c_str());
++                        }
++                    }
++
+                     const int64_t t_end = ggml_time_us();
+                     const double t_restore_ms = (t_end - t_start) / 1000.0;
+ 

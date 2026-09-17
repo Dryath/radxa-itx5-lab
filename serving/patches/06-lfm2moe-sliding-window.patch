@@ -1,0 +1,29 @@
+diff --git a/src/models/lfm2moe.cpp b/src/models/lfm2moe.cpp
+index f8d47f9..fb7c12f 100644
+--- a/src/models/lfm2moe.cpp
++++ b/src/models/lfm2moe.cpp
+@@ -18,6 +18,24 @@ void llama_model_lfm2moe::load_arch_hparams(llama_model_loader & ml) {
+         case 40: type = LLM_TYPE_24B_A2B; break;
+         default: type = LLM_TYPE_UNKNOWN;
+     }
++
++    // Mirrors llama_model_lfm2::load_arch_hparams. build_arch_graph() below already
++    // dispatches to graph<true> on LLAMA_SWA_TYPE_STANDARD, but nothing here ever read
++    // the window, so the iswa path was unreachable for this arch -- including via
++    // --override-kv, since an override only lands where something calls get_key.
++    if (const auto is_swa = ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW, hparams.n_swa, false); is_swa && hparams.n_swa > 0) {
++        hparams.swa_type = LLAMA_SWA_TYPE_STANDARD;
++
++        // rope_freq_base_train_swa defaults to 10000.0f and get_rope_freq_base() returns
++        // it for every SWA layer. LFM2-24B-A2B trains at 1e6, so without this the ten
++        // attention layers silently drop 100x.
++        hparams.rope_freq_base_train_swa = hparams.rope_freq_base_train;
++        ml.get_key(LLM_KV_ROPE_FREQ_BASE_SWA, hparams.rope_freq_base_train_swa, false);
++
++        for (uint32_t il = 0; il < hparams.n_layer(); ++il) {
++            hparams.is_swa_impl[il] = !hparams.is_recr_impl[il];
++        }
++    }
+ }
+ 
+ void llama_model_lfm2moe::load_arch_tensors(llama_model_loader &) {

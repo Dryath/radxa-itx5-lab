@@ -1,0 +1,150 @@
+diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
+index 85a1ae7..978b05f 100644
+--- a/ggml/include/ggml.h
++++ b/ggml/include/ggml.h
+@@ -2537,6 +2537,13 @@ extern "C" {
+             struct ggml_tensor  * ids,
+             int64_t               K);
+ 
++    // ask the backend to write the final state of each sequence straight into rows
++    // [head, head + n_seqs) of s instead of into the result (K == 1 only); the caller then
++    // skips copying the state back. Only the CPU backend implements it.
++    GGML_API void ggml_ssm_scan_set_inplace(
++            struct ggml_tensor  * scan,
++            int64_t               head);
++
+     // partition into non-overlapping windows with padding if needed
+     // example:
+     // a:   768   64   64    1
+diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
+index 266261c..70741ab 100644
+--- a/ggml/src/ggml-cpu/ops.cpp
++++ b/ggml/src/ggml-cpu/ops.cpp
+@@ -9792,6 +9792,10 @@ static void ggml_compute_forward_ssm_scan_f32(
+     const int64_t ns = src1->ne[3]; // number of sequences in the batch
+     const int64_t K  = ggml_get_op_params_i32(dst, 0);
+ 
++    // ggml_ssm_scan_set_inplace: the final states go to src0 rows [head, head + ns)
++    const bool    inplace = K == 1 && ggml_get_op_params_i32(dst, 1) != 0;
++    const int64_t head    = inplace ? ggml_get_op_params_i32(dst, 2) : 0;
++
+     // can't use ggml_nbytes because src1 is not necessarily contiguous
+     const int64_t s_off = ggml_nelements(src1) * ggml_element_size(src1);
+ 
+@@ -9816,9 +9820,23 @@ static void ggml_compute_forward_ssm_scan_f32(
+ 
+     const int32_t * ids = (const int32_t *) src6->data;
+ 
++    // writing a sequence's state in place is only safe if no other sequence still has to read
++    // that row as its source; otherwise compute into dst and copy the states back at the end
++    bool aliased = false;
++    if (inplace) {
++        for (int i3 = 0; i3 < ns; ++i3) {
++            if (ids[i3] != head + i3 && ids[i3] >= head && ids[i3] < head + ns) {
++                aliased = true;
++            }
++        }
++    }
++    const bool direct = inplace && !aliased;
++
+     for (int i3 = 0; i3 < ns; ++i3) {
+         const float * s0 = (const float *) ((const char *) src0->data + ids[i3]*(src0->nb[3])); // {d_state, dim, nh, ns}
+-              float * s  = (      float *) ((      char *) dst->data  + i3*(src0->nb[3]) + s_off); // {d_state, dim, nh, ns}
++              float * s  = direct
++                  ? (float *) ((char *) src0->data + (head + i3)*(src0->nb[3]))     // {d_state, dim, nh, ns}
++                  : (float *) ((char *) dst->data  + i3*(src0->nb[3]) + s_off);     // {d_state, dim, nh, ns}
+ 
+         for (int i2 = 0; i2 < nt; ++i2) {
+             const float * x  = (const float *) ((const char *) src1->data + i2*(src1->nb[2]) + i3*(src1->nb[3])); // {dim, nh, nt, ns}
+@@ -9991,6 +10009,16 @@ static void ggml_compute_forward_ssm_scan_f32(
+             s0 = s;
+         }
+     }
++
++    if (inplace && aliased) {
++        for (int i3 = 0; i3 < ns; ++i3) {
++            const char * s = (const char *) dst->data + i3*(src0->nb[3]) + s_off;
++                  char * d = (      char *) src0->data + (head + i3)*(src0->nb[3]);
++            for (int h = ih0; h < ih1; ++h) {
++                memcpy(d + h*src0->nb[2], s + h*src0->nb[2], src0->nb[2]);
++            }
++        }
++    }
+ }
+ 
+ void ggml_compute_forward_ssm_scan(
+diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
+index 832778d..315457c 100644
+--- a/ggml/src/ggml.c
++++ b/ggml/src/ggml.c
+@@ -5768,6 +5768,17 @@ struct ggml_tensor * ggml_ssm_scan(
+     return result;
+ }
+ 
++void ggml_ssm_scan_set_inplace(
++        struct ggml_tensor * scan,
++        int64_t              head) {
++    GGML_ASSERT(scan->op == GGML_OP_SSM_SCAN);
++    GGML_ASSERT(ggml_get_op_params_i32(scan, 0) == 1);
++    GGML_ASSERT(head >= 0 && head <= INT32_MAX);
++
++    ggml_set_op_params_i32(scan, 1, 1);
++    ggml_set_op_params_i32(scan, 2, (int32_t) head);
++}
++
+ // ggml_win_part
+ 
+ struct ggml_tensor * ggml_win_part(
+diff --git a/src/models/mamba-base.cpp b/src/models/mamba-base.cpp
+index 03ee380..5dabe96 100644
+--- a/src/models/mamba-base.cpp
++++ b/src/models/mamba-base.cpp
+@@ -3,6 +3,7 @@
+ #include "llama-memory-recurrent.h"
+ 
+ #include <algorithm>
++#include <cstdlib>
+ 
+ llm_build_mamba_base::llm_build_mamba_base(const llm_graph_params & params) : llm_graph_context(params) {}
+ 
+@@ -250,6 +251,18 @@ ggml_tensor * llm_build_mamba_base::build_mamba2_layer(llm_graph_input_rs * inp,
+ 
+         ggml_tensor * A = model.layers[il].ssm_a;
+ 
++        // Update the ssm state in place in the cache instead of scanning into the result and copying
++        // it back: two fewer passes over a state that is 1.5 MB per layer on Granite-4.0-H-Tiny.
++        // CPU backend only, no rollback snapshots, and no extra states in build_rs (those are read
++        // after the scan). LLAMA_SSM_INPLACE=0 restores the copy.
++        static const bool ssm_inplace_env = [] {
++            const char * e = getenv("LLAMA_SSM_INPLACE");
++            return e == nullptr || atoi(e) != 0;
++        }();
++        const bool ssm_inplace = ssm_inplace_env && K == 1 &&
++                                 (int64_t) mctx_cur->get_n_rs() == n_seqs &&
++                                 ssm_states_all->buffer && ggml_backend_buffer_is_host(ssm_states_all->buffer);
++
+         // use the states and the indices provided by build_recurrent_state
+         // (this is necessary in order to properly use the states before they are overwritten,
+         //  while avoiding to make unnecessary copies of the states)
+@@ -259,7 +272,11 @@ ggml_tensor * llm_build_mamba_base::build_mamba2_layer(llm_graph_input_rs * inp,
+             // TODO: use semistructured matrices to implement state-space duality
+             // => {d_inner, n_seq_tokens, n_seqs} and {d_state, d_inner, n_seqs}
+             // K > 1 asks the backend to return rollback snapshots in addition to the final state.
+-            return ggml_ssm_scan(ctx, ssm, x, dt, A, B, C, ids, K);
++            ggml_tensor * scan = ggml_ssm_scan(ctx, ssm, x, dt, A, B, C, ids, K);
++            if (ssm_inplace) {
++                ggml_ssm_scan_set_inplace(scan, kv_head);
++            }
++            return scan;
+         };
+ 
+         ggml_tensor * y_ssm = build_rs(inp, ssm_states_all, hparams.n_embd_s(), ubatch.n_seqs, get_ssm_rows);
+@@ -269,7 +286,7 @@ ggml_tensor * llm_build_mamba_base::build_mamba2_layer(llm_graph_input_rs * inp,
+         const size_t  y_row_size   = ggml_row_size(y_ssm->type, D);
+         const size_t  state_offset = ggml_nelements(x) * ggml_element_size(x);
+ 
+-        ggml_build_forward_expand(
++        if (!ssm_inplace) ggml_build_forward_expand(
+             gf, ggml_cpy(ctx0,
+                          ggml_view_3d(ctx0, y_ssm, D, n_seqs, n_written,
+                                       y_row_size, y_row_size * n_seqs, state_offset),

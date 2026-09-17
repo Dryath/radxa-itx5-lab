@@ -1,0 +1,111 @@
+diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
+index f5e419c..e4317cc 100644
+--- a/ggml/src/ggml-cpu/repack.cpp
++++ b/ggml/src/ggml-cpu/repack.cpp
+@@ -4157,7 +4157,25 @@ class tensor_traits_base : public ggml::cpu::tensor_traits {
+ 
+ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PARAM_TYPE> class tensor_traits : public tensor_traits_base {
+ 
+-    bool work_size(int /* n_threads */, const struct ggml_tensor * op, size_t & size) override {
++    // grouped MUL_MAT_ID: interleave 4 of an expert's routed rows and run one gemm, as the dense path does
++    static bool mmid_gemm_enabled() {
++        static const bool enabled = [] {
++            const char * e = getenv("GGML_MMID_GEMM");
++            return e == nullptr || atoi(e) != 0;
++        }();
++        return enabled;
++    }
++
++    static size_t mmid_gemm_scratch_size(const struct ggml_tensor * op) {
++        if (PARAM_TYPE != GGML_TYPE_Q8_0) {
++            return 0;
++        }
++        const int64_t ne10 = op->src[1]->ne[0];
++        const int64_t ne01 = op->src[0]->ne[1];
++        return GGML_PAD((ne10/QK8_0)*sizeof(block_q8_0x4) + 4*ne01*sizeof(float), sizeof(int64_t));
++    }
++
++    bool work_size(int n_threads, const struct ggml_tensor * op, size_t & size) override {
+         // not realy a GGML_TYPE_Q8_0 but same size.
+         switch (op->op) {
+             case GGML_OP_MUL_MAT:
+@@ -4177,6 +4195,10 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
+ 
+                     size += sizeof_mmid_row_mapping*ne02*(ne12 + 1);
+ 
++                    // per-thread scratch for the grouped gemm path: one interleaved 4-row group of src1
++                    // and the 4 matching output rows
++                    size += n_threads*mmid_gemm_scratch_size(op);
++
+                     return true;
+                 }
+             default:
+@@ -4383,6 +4405,50 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
+         }
+     }
+ 
++    // rows [0, return) of expert cur_a done via gemm in groups of 4; the caller finishes the rest with gemv
++    struct mmid_row_map { int32_t i1; int32_t i2; };
++    __attribute__((noinline)) int64_t mmid_gemm_rows(const ggml_compute_params * params, ggml_tensor * dst,
++            const char * src0_cur, const mmid_row_map * rows_of_expert, int64_t nr1,
++            int64_t src0_cur_start, int64_t src0_cur_end, char * scratch) {
++        const ggml_tensor * src0 = dst->src[0];
++        const ggml_tensor * src1 = dst->src[1];
++        GGML_TENSOR_BINARY_OP_LOCALS
++        (void) params;
++
++        const size_t  nbw1    = ggml_row_size(PARAM_TYPE, ne10);
++        const size_t  nbw2    = nbw1*ne11;
++        const int64_t nblocks = ne10/QK8_0;
++        const int64_t ncols   = src0_cur_end - src0_cur_start;
++        const char *  wdata   = (const char *) params->wdata;
++
++        auto *  q  = (block_q8_0x4 *) scratch;
++        float * so = (float *) (scratch + nblocks*sizeof(block_q8_0x4));
++
++        int64_t ir1 = 0;
++        for (; ir1 + 4 <= nr1; ir1 += 4) {
++            const block_q8_0 * rows[4];
++            for (int k = 0; k < 4; k++) {
++                const mmid_row_map rm = rows_of_expert[ir1 + k];
++                rows[k] = (const block_q8_0 *) (wdata + ((rm.i1 % ne11)*nbw1 + rm.i2*nbw2));
++            }
++            for (int64_t b = 0; b < nblocks; b++) {
++                block_q8_0 in[4] = { rows[0][b], rows[1][b], rows[2][b], rows[3][b] };
++                q[b] = make_block_q8_0x4(in, INTER_SIZE);
++            }
++
++            gemm<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(
++                ne00, so + src0_cur_start, ne01,
++                src0_cur + src0_cur_start*nb01, q, 4, ncols);
++
++            for (int k = 0; k < 4; k++) {
++                const mmid_row_map rm = rows_of_expert[ir1 + k];
++                memcpy((float *) ((char *) dst->data + (rm.i1*nb1 + rm.i2*nb2)) + src0_cur_start,
++                       so + k*ne01 + src0_cur_start, ncols*sizeof(float));
++            }
++        }
++        return ir1;
++    }
++
+     void forward_mul_mat_id(ggml_compute_params * params, ggml_tensor * op) {
+         const ggml_tensor * src0 = op->src[0];
+         const ggml_tensor * src1 = op->src[1];
+@@ -4495,7 +4561,16 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
+                 return;
+             }
+ 
+-            for (int ir1 = 0; ir1 < nr1; ir1++) {
++            int64_t ir1_start = 0;
++            if (nr1 >= 4 && PARAM_TYPE == GGML_TYPE_Q8_0 && ne10 % QK8_0 == 0 && mmid_gemm_enabled()) {
++                char * scratch = (char *) matrix_rows + n_as*ne12*sizeof(mmid_row_mapping) + ith*mmid_gemm_scratch_size(op);
++                GGML_ASSERT(scratch + mmid_gemm_scratch_size(op) <= (char *) params->wdata + params->wsize);
++                GGML_ASSERT(sizeof(mmid_row_map) == sizeof(mmid_row_mapping));
++                ir1_start = mmid_gemm_rows(params, dst, src0_cur, (const mmid_row_map *) &MMID_MATRIX_ROW(cur_a, 0), nr1,
++                                           src0_cur_start, src0_cur_end, scratch);
++            }
++
++            for (int ir1 = ir1_start; ir1 < nr1; ir1++) {
+                 struct mmid_row_mapping row_mapping = MMID_MATRIX_ROW(cur_a, ir1);
+ 
+                 const int id = row_mapping.i1;  // selected expert index

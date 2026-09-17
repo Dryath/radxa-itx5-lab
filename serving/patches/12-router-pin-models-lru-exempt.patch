@@ -1,0 +1,85 @@
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index a46e858..82b2fab 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -36,8 +36,6 @@
+ #include <windows.h>
+ #endif
+ 
+-using json = nlohmann::ordered_json;
+-
+ // [LOCAL PATCH] persist context checkpoints alongside slot save files.
+ // Hybrid/recurrent models cannot rewind their recurrent state, so prompt reuse
+ // after a slot restore depends entirely on the checkpoint stack — which the
+diff --git a/tools/server/server-models.cpp b/tools/server/server-models.cpp
+index 39e9b06..1d81243 100644
+--- a/tools/server/server-models.cpp
++++ b/tools/server/server-models.cpp
+@@ -17,6 +17,8 @@
+ 
+ #include <cpp-httplib/httplib.h> // TODO: remove this once we use HTTP client from download.h
+ #include <optional>
++#include <fstream>
++#include <set>
+ 
+ #include <functional>
+ #include <optional>
+@@ -75,6 +77,36 @@ struct server_subproc {
+     }
+ };
+ 
++// [LOCAL PATCH] models listed in the pin file are exempt from LRU eviction.
++// One model name per line, '#' comments allowed. Default path
++// ~/.config/llm-router/pinned, overridable via LLAMA_ROUTER_PIN_FILE. Re-read
++// on every victim pass, so changing the pinned main needs no restart.
++// If every candidate is pinned, pick_victim returns "" and no eviction occurs;
++// models_max is then exceeded — the cgroup memory guard is the real backstop.
++static std::set<std::string> router_pinned_models() {
++    std::set<std::string> pinned;
++    std::string path;
++    if (const char * p = getenv("LLAMA_ROUTER_PIN_FILE")) {
++        path = p;
++    } else if (const char * h = getenv("HOME")) {
++        path = std::string(h) + "/.config/llm-router/pinned";
++    } else {
++        return pinned;
++    }
++    std::ifstream f(path);
++    std::string line;
++    while (std::getline(f, line)) {
++        const size_t b = line.find_first_not_of(" \t");
++        if (b == std::string::npos) continue;
++        size_t e = line.find_last_not_of(" \t\r");
++        line = line.substr(b, e - b + 1);
++        if (!line.empty() && line[0] != '#') {
++            pinned.insert(line);
++        }
++    }
++    return pinned;
++}
++
+ struct server_lru_sched {
+     server_lru_sched(server_models & models) : models(models) {}
+ 
+@@ -87,9 +119,13 @@ struct server_lru_sched {
+     // returns "" if no model can be given up
+     std::string pick_victim(std::unique_lock<std::mutex> & lk) {
+         check_lock(lk);
++        const auto pinned = router_pinned_models(); // [LOCAL PATCH]
+         std::string victim;
+         int64_t victim_last_used = 0;
+         for (const auto & m : models.mapping) {
++            if (pinned.count(m.first)) {
++                continue; // [LOCAL PATCH] pinned: never a victim
++            }
+             // a busy model is mid-request, one still coming up has no request to finish
+             if (m.second.req_count != 0 || !m.second.meta.is_ready_or_sleep()) {
+                 continue;
+@@ -923,6 +959,7 @@ std::vector<server_model_meta> server_models::get_all_meta() {
+     return result;
+ }
+ 
++
+ void server_models::unload_lru() {
+     if (base_params.models_max <= 0) {
+         return; // no limit

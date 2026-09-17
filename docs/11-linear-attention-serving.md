@@ -20,6 +20,10 @@ and the serving patches below.
 
 ## The patches (measured; RK3588, 4×A76, `-t 4`)
 
+> **The actual diffs are in [`serving/patches/`](../serving/patches/)** — 13 self-contained
+> patches against ggml-org/llama.cpp you can `git apply` to your own checkout. The table there
+> maps each file to its effect and its off-by-default gate.
+
 **Prefill — batch the MoE routing.** llama.cpp runs each routed expert row as a separate gemv;
 grouping 4 rows into a `block_q8_0x4` gemm turns the A76's biggest prefill cost (routed matmul
 ≈ 47% of it) into a batched op:

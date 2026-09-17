@@ -1,0 +1,112 @@
+diff --git a/src/models/granite-hybrid.cpp b/src/models/granite-hybrid.cpp
+index c177ae7..fbbce37 100644
+--- a/src/models/granite-hybrid.cpp
++++ b/src/models/granite-hybrid.cpp
+@@ -1,4 +1,5 @@
+ #include "models.h"
++#include "../llama-memory-hybrid-iswa.h"
+ 
+ void llama_model_granite_hybrid::load_arch_hparams(llama_model_loader & ml) {
+     ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
+@@ -24,6 +25,19 @@ void llama_model_granite_hybrid::load_arch_hparams(llama_model_loader & ml) {
+         hparams.is_recr_impl[i] = hparams.n_head_kv(i) == 0;
+     }
+ 
++    // Optional: bound every attention layer to a sliding window, making the model
++    // O(1) in context. All attention layers here get the same treatment, so the plain
++    // hybrid memory's single SWA-typed cache is enough - no iSWA variant needed.
++    // Granite is NoPE and rope_theta is 10000, which already equals the
++    // rope_freq_base_train_swa default, so unlike lfm2 there is no SWA rope base to seed.
++    if (const auto is_swa = ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW, hparams.n_swa, false);
++        is_swa && hparams.n_swa > 0) {
++        hparams.swa_type = LLAMA_SWA_TYPE_STANDARD;
++        for (uint32_t i = 0; i < hparams.n_layer(); ++i) {
++            hparams.is_swa_impl[i] = !hparams.is_recr_impl[i];
++        }
++    }
++
+     ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
+ 
+     switch (hparams.n_embd) {
+@@ -129,10 +143,14 @@ void llama_model_granite_hybrid::load_arch_tensors(llama_model_loader &) {
+ }
+ 
+ std::unique_ptr<llm_graph_context> llama_model_granite_hybrid::build_arch_graph(const llm_graph_params & params) const {
+-    return std::make_unique<graph>(*this, params);
++    if (hparams.swa_type == LLAMA_SWA_TYPE_STANDARD) {
++        return std::make_unique<graph<true>>(*this, params);
++    }
++    return std::make_unique<graph<false>>(*this, params);
+ }
+ 
+-llama_model_granite_hybrid::graph::graph(const llama_model & model, const llm_graph_params & params) :
++template <bool iswa>
++llama_model_granite_hybrid::graph<iswa>::graph(const llama_model & model, const llm_graph_params & params) :
+     llm_build_mamba_base(params) {
+     const int64_t n_embd_head = hparams.n_embd_head_v();
+     GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
+@@ -142,7 +160,12 @@ llama_model_granite_hybrid::graph::graph(const llama_model & model, const llm_gr
+ 
+     inpL = build_inp_embd(model.tok_embd);
+ 
+-    auto * inp = build_inp_mem_hybrid();
++    inp_hybrid_type * inp = nullptr;
++    if constexpr (iswa) {
++        inp = build_inp_mem_hybrid_iswa();
++    } else {
++        inp = build_inp_mem_hybrid();
++    }
+ 
+     ggml_tensor * inp_out_ids = build_inp_out_ids();
+ 
+@@ -199,9 +222,10 @@ llama_model_granite_hybrid::graph::graph(const llama_model & model, const llm_gr
+     ggml_build_forward_expand(gf, cur);
+ }
+ 
+-ggml_tensor * llama_model_granite_hybrid::graph::build_attention_layer(ggml_tensor *             cur,
++template <bool iswa>
++ggml_tensor * llama_model_granite_hybrid::graph<iswa>::build_attention_layer(ggml_tensor *             cur,
+                                                               ggml_tensor *             inp_pos,
+-                                                              llm_graph_input_attn_kv * inp_attn,
++                                                              std::conditional_t<iswa, llm_graph_input_attn_kv_iswa, llm_graph_input_attn_kv> * inp_attn,
+                                                               const llama_model &       model,
+                                                               const int64_t             n_embd_head,
+                                                               const int                 il) {
+@@ -229,7 +253,8 @@ ggml_tensor * llama_model_granite_hybrid::graph::build_attention_layer(ggml_tens
+     return cur;
+ }
+ 
+-ggml_tensor * llama_model_granite_hybrid::graph::build_layer_ffn(ggml_tensor *       cur,
++template <bool iswa>
++ggml_tensor * llama_model_granite_hybrid::graph<iswa>::build_layer_ffn(ggml_tensor *       cur,
+                                                         ggml_tensor *       inpSA,
+                                                         const llama_model & model,
+                                                         const int           il) {
+@@ -300,3 +325,7 @@ ggml_tensor * llama_model_granite_hybrid::graph::build_layer_ffn(ggml_tensor *
+ 
+     return cur;
+ }
++
++// Explicit template instantiations
++template struct llama_model_granite_hybrid::graph<true>;
++template struct llama_model_granite_hybrid::graph<false>;
+diff --git a/src/models/models.h b/src/models/models.h
+index 3cddde1..ae02645 100644
+--- a/src/models/models.h
++++ b/src/models/models.h
+@@ -1734,10 +1734,14 @@ struct llama_model_granite_hybrid : public llama_model_base {
+     void load_arch_hparams(llama_model_loader & ml) override;
+     void load_arch_tensors(llama_model_loader & ml) override;
+ 
++    template <bool iswa>
+     struct graph : public llm_build_mamba_base {
++        using inp_hybrid_type = std::conditional_t<iswa, llm_graph_input_mem_hybrid_iswa, llm_graph_input_mem_hybrid>;
++        using inp_attn_type   = std::conditional_t<iswa, llm_graph_input_attn_kv_iswa,    llm_graph_input_attn_kv>;
++
+         graph(const llama_model & model, const llm_graph_params & params);
+         ggml_tensor * build_layer_ffn(ggml_tensor * cur, ggml_tensor * inpSA, const llama_model & model, const int il);
+-        ggml_tensor * build_attention_layer(ggml_tensor * cur, ggml_tensor * inp_pos, llm_graph_input_attn_kv * inp_attn,
++        ggml_tensor * build_attention_layer(ggml_tensor * cur, ggml_tensor * inp_pos, inp_attn_type * inp_attn,
+             const llama_model & model,const int64_t n_embd_head, const int il);
+     };
+ 

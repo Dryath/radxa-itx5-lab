@@ -1,0 +1,34 @@
+diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
+index 5ef03e1..832778d 100644
+--- a/ggml/src/ggml.c
++++ b/ggml/src/ggml.c
+@@ -36,6 +36,7 @@
+ #include <signal.h>
+ #if defined(__gnu_linux__)
+ #include <syscall.h>
++#include <sys/mman.h>
+ #endif
+ 
+ #if defined(__APPLE__)
+@@ -365,7 +366,21 @@ void * ggml_aligned_malloc(size_t size) {
+             break;
+     }
+   #else
++   #if defined(__gnu_linux__) && defined(MADV_HUGEPAGE)
++    static int use_hugepages = -1;
++    if (use_hugepages < 0) {
++        const char * env = getenv("GGML_HUGEPAGES");
++        use_hugepages = env != NULL && atoi(env) > 0;
++    }
++    const size_t huge_size = 2u*1024*1024;
++    const bool huge = use_hugepages && size >= 8*huge_size;
++    int result = posix_memalign(&aligned_memory, huge ? huge_size : (size_t) alignment, size);
++    if (result == 0 && huge && madvise(aligned_memory, size & ~(huge_size - 1), MADV_HUGEPAGE) != 0) {
++        GGML_LOG_WARN("%s: madvise(MADV_HUGEPAGE) failed, errno=%d\n", __func__, errno);
++    }
++   #else
+     int result = posix_memalign(&aligned_memory, alignment, size);
++   #endif
+   #endif
+     if (result != 0) {
+         // Handle allocation failure

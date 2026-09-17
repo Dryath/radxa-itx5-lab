@@ -1,0 +1,18 @@
+diff --git a/src/models/lfm2.cpp b/src/models/lfm2.cpp
+index 07b71cc..454f1b2 100644
+--- a/src/models/lfm2.cpp
++++ b/src/models/lfm2.cpp
+@@ -25,6 +25,13 @@ void llama_model_lfm2::load_arch_hparams(llama_model_loader & ml) {
+ 
+     if (const auto is_swa = ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW, hparams.n_swa, false); is_swa && hparams.n_swa > 0) {
+         hparams.swa_type = LLAMA_SWA_TYPE_STANDARD;
++
++        // rope_freq_base_train_swa defaults to 10000.0f and get_rope_freq_base() returns
++        // it for every SWA layer. Without seeding it here, forcing SWA on a model trained
++        // at a high rope_theta (LFM2-24B-A2B uses 1e6) silently drops those layers 100x.
++        hparams.rope_freq_base_train_swa = hparams.rope_freq_base_train;
++        ml.get_key(LLM_KV_ROPE_FREQ_BASE_SWA, hparams.rope_freq_base_train_swa, false);
++
+         for (uint32_t il = 0; il < hparams.n_layer(); ++il) {
+             hparams.is_swa_impl[il] = !hparams.is_recr_impl[il];
+         }

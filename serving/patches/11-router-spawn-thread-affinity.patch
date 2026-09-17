@@ -1,0 +1,69 @@
+diff --git a/tools/server/server-models.cpp b/tools/server/server-models.cpp
+index 4d2592b..39e9b06 100644
+--- a/tools/server/server-models.cpp
++++ b/tools/server/server-models.cpp
+@@ -1,6 +1,11 @@
+ #include "server-common.h"
+ #include "http.h"
+ #include "server-models.h"
++
++#if defined(__linux__)
++#include <sched.h>
++#include <unistd.h>
++#endif
+ #include "server-context.h"
+ #include "server-stream.h"
+ 
+@@ -1025,7 +1030,51 @@ void server_models::load(const std::string & name, const load_options & opts) {
+         // TODO @ngxson : maybe separate stdout and stderr in the future
+         //                so that we can use stdout for commands and stderr for logging
+         int options = subprocess_option_no_window | subprocess_option_combined_stdout_stderr;
+-        if (!inst.subproc->sproc.create(child_args, options, child_env)) {
++#if defined(__linux__)
++        // vision-oracle local patch: when GOMP_CPU_AFFINITY is set, libgomp pins this
++        // process's threads to single cores; a forked child inherits that 1-core mask and
++        // its own libgomp then cannot bind OMP threads to the full list (observed on
++        // RK3588 with isolcpus: 4 threads stacked on one core, 19x decode slowdown).
++        // Widen this thread's mask for the fork; the child's libgomp re-binds from env.
++        cpu_set_t spawn_saved_mask, spawn_wide_mask;
++        bool spawn_have_saved = sched_getaffinity(0, sizeof(spawn_saved_mask), &spawn_saved_mask) == 0;
++        CPU_ZERO(&spawn_wide_mask);
++        // The child's libgomp builds OMP_PLACES from the mask it starts with, and
++        // OMP_PLACES/OMP_PROC_BIND outrank GOMP_CPU_AFFINITY — so the fork mask must be
++        // exactly the intended compute set, or "close" binding walks onto the wrong cores.
++        // Parse GOMP_CPU_AFFINITY ("4-7", "4 5 6 7", "4,5"); fall back to all online CPUs.
++        {
++            const char * gomp = getenv("GOMP_CPU_AFFINITY");
++            if (gomp != nullptr) {
++                int lo = -1, hi = -1, n_read = 0;
++                const char * p = gomp;
++                while (*p != '\0') {
++                    if (sscanf(p, "%d-%d%n", &lo, &hi, &n_read) == 2) {
++                        for (int i = lo; i <= hi && i < CPU_SETSIZE; i++) { CPU_SET(i, &spawn_wide_mask); }
++                        p += n_read;
++                    } else if (sscanf(p, "%d%n", &lo, &n_read) == 1) {
++                        if (lo < CPU_SETSIZE) { CPU_SET(lo, &spawn_wide_mask); }
++                        p += n_read;
++                    } else {
++                        p++;
++                    }
++                }
++            }
++            if (CPU_COUNT(&spawn_wide_mask) == 0) {
++                for (long i = 0, n = sysconf(_SC_NPROCESSORS_ONLN); i < n; i++) {
++                    CPU_SET(i, &spawn_wide_mask);
++                }
++            }
++        }
++        sched_setaffinity(0, sizeof(spawn_wide_mask), &spawn_wide_mask);
++#endif
++        bool spawn_ok = inst.subproc->sproc.create(child_args, options, child_env);
++#if defined(__linux__)
++        if (spawn_have_saved) {
++            sched_setaffinity(0, sizeof(spawn_saved_mask), &spawn_saved_mask);
++        }
++#endif
++        if (!spawn_ok) {
+             throw std::runtime_error("failed to spawn server instance");
+         }
+     }
