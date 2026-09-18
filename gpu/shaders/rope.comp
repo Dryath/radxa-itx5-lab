@@ -1,0 +1,39 @@
+#version 450
+
+/* RoPE: rotate query/key heads in-place.
+ *
+ * Layout: qk[n_heads × head_dim], head_dim pairs rotated by angle = pos * theta^(-2i/D).
+ * One workgroup per head; each thread handles one rotation pair (i, i+D/2).
+ * dispatch(n_heads, 1, 1). */
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) buffer QKBuf { float d[]; } qk;
+
+layout(push_constant) uniform PC {
+    uint  n_heads;
+    uint  head_dim;
+    int   pos;
+    float theta;
+} pc;
+
+void main() {
+    uint h   = gl_WorkGroupID.x;
+    uint tid = gl_LocalInvocationID.x;
+    uint D   = pc.head_dim;
+    uint half_D = D / 2u;
+
+    if (h >= pc.n_heads) return;
+
+    uint off = h * D;
+
+    for (uint i = tid; i < half_D; i += 64u) {
+        float freq  = 1.0 / pow(pc.theta, float(2u * i) / float(D));
+        float angle = float(pc.pos) * freq;
+        float c = cos(angle), s = sin(angle);
+        float v0 = qk.d[off + i];
+        float v1 = qk.d[off + i + half_D];
+        qk.d[off + i]          = v0 * c - v1 * s;
+        qk.d[off + i + half_D] = v0 * s + v1 * c;
+    }
+}

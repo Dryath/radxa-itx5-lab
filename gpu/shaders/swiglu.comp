@@ -1,0 +1,19 @@
+#version 450
+
+/* SwiGLU activation: gate[i] = gate[i] * sigmoid(gate[i]) * up[i]
+ * Fused in-place: gate buffer is updated, up is read-only.
+ * dispatch(ceil(F/128), 1, 1). */
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) buffer GateBuf { float d[]; } gate;
+layout(set = 0, binding = 1) readonly buffer UpBuf { float d[]; } up;
+
+layout(push_constant) uniform PC { uint F; } pc;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.F) return;
+    float g = gate.d[i];
+    gate.d[i] = (g / (1.0 + exp(-g))) * up.d[i];
+}

@@ -1,0 +1,91 @@
+#version 450
+
+/* GQA softmax attention for one query head.
+ *
+ * Computes: out[hq*D .. +D] += sum_p{ softmax(Q·K^T/sqrt(D))[p] * V[p] }
+ *
+ * Called once per query head. Each invocation is a single workgroup.
+ * local_size_x = 64 (handles seq_len up to 64 per pass, loops for longer).
+ *
+ * Inputs:
+ *   q_head[D]        — query for this head
+ *   kv_k[seq×Hk×D]  — full K cache (all positions)
+ *   kv_v[seq×Hk×D]  — full V cache
+ *
+ * Output:
+ *   out_head[D]      — accumulated output for this head (+=, zero-init by caller)
+ *
+ * push constants: hq (query head idx), hk (kv head idx), D, seq_len, scale */
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer QBuf  { float d[]; } qb;    /* q_head[D] */
+layout(set = 0, binding = 1) readonly buffer KBuf  { float d[]; } kb;    /* kv_k[seq×Hk×D] */
+layout(set = 0, binding = 2) readonly buffer VBuf  { float d[]; } vb;    /* kv_v[seq×Hk×D] */
+layout(set = 0, binding = 3) buffer       OutBuf   { float d[]; } ob;    /* out_head[D] */
+
+layout(push_constant) uniform PC {
+    uint  hq;        /* query head index */
+    uint  hk;        /* kv head index (= hq / ngroups) */
+    uint  D;         /* head_dim */
+    uint  seq_len;   /* current sequence length (pos+1) */
+    uint  Hk;        /* number of kv heads */
+    float scale;     /* 1/sqrt(D) */
+} pc;
+
+shared float scores[4096];   /* max seq_len supported */
+shared float smax;
+shared float ssum;
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint D   = pc.D;
+    uint seq = pc.seq_len;
+    uint hk  = pc.hk;
+
+    /* --- Score all positions: attn[p] = dot(Q, K[p,hk,:]) * scale --- */
+    for (uint p = tid; p < seq; p += 64u) {
+        float dot = 0.0;
+        uint koff = p * pc.Hk * D + hk * D;
+        for (uint d = 0u; d < D; d++)
+            dot += qb.d[d] * kb.d[koff + d];
+        scores[p] = dot * pc.scale;
+    }
+    barrier();
+
+    /* --- Softmax (numerically stable): find max --- */
+    if (tid == 0u) {
+        float mx = scores[0];
+        for (uint p = 1u; p < seq; p++) if (scores[p] > mx) mx = scores[p];
+        smax = mx;
+    }
+    barrier();
+
+    float mx = smax;
+    for (uint p = tid; p < seq; p += 64u)
+        scores[p] = exp(scores[p] - mx);
+    barrier();
+
+    /* Sum. */
+    if (tid == 0u) {
+        float s = 0.0;
+        for (uint p = 0u; p < seq; p++) s += scores[p];
+        ssum = s;
+    }
+    barrier();
+
+    float inv_sum = 1.0 / ssum;
+    for (uint p = tid; p < seq; p += 64u)
+        scores[p] *= inv_sum;
+    barrier();
+
+    /* --- Weighted sum of values: out += sum_p{ attn[p] * V[p,hk,:] } --- */
+    for (uint d = tid; d < D; d += 64u) {
+        float acc = 0.0;
+        for (uint p = 0u; p < seq; p++) {
+            uint voff = p * pc.Hk * D + hk * D;
+            acc += scores[p] * vb.d[voff + d];
+        }
+        ob.d[pc.hq * D + d] += acc;
+    }
+}

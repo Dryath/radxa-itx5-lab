@@ -1,0 +1,40 @@
+#version 450
+
+/* SGEMM: y[N] += x[K] @ W[N×K]  (M=1, row-major W, fp32 throughout)
+ *
+ * Each invocation handles one output row (one dot product).
+ * local_size_x=128 maps well to Valhall warp width (16) × 8 concurrent warps.
+ * dispatch: ceil(N/128) workgroups. */
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer XBuf { float d[]; } xb;
+layout(set = 0, binding = 1) readonly buffer WBuf { float d[]; } wb;
+layout(set = 0, binding = 2) buffer       YBuf { float d[]; } yb;
+
+layout(push_constant) uniform PC {
+    uint K;
+    uint N;
+} pc;
+
+void main() {
+    uint n = gl_GlobalInvocationID.x;
+    if (n >= pc.N) return;
+
+    float sum = 0.0;
+    uint  base = n * pc.K;
+
+    /* 4-wide unroll: reduces loop overhead and helps the compiler vectorise. */
+    uint k = 0u;
+    for (; k + 3u < pc.K; k += 4u) {
+        sum += xb.d[k    ] * wb.d[base + k    ];
+        sum += xb.d[k + 1u] * wb.d[base + k + 1u];
+        sum += xb.d[k + 2u] * wb.d[base + k + 2u];
+        sum += xb.d[k + 3u] * wb.d[base + k + 3u];
+    }
+    for (; k < pc.K; k++) {
+        sum += xb.d[k] * wb.d[base + k];
+    }
+
+    yb.d[n] += sum;
+}

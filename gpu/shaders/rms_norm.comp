@@ -1,0 +1,47 @@
+#version 450
+
+/* RMSNorm: out[i] = x[i] / rms(x) * weight[i]
+ * rms = sqrt(mean(x^2) + eps)
+ *
+ * Single workgroup, parallel reduction across N elements.
+ * local_size_x must be >= N/2 for correctness; set to 512 to cover n_embd ≤ 1024.
+ * For larger N (e.g. N=4096) we loop: each thread handles N/local_size_x elements. */
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer XBuf    { float d[]; } xb;
+layout(set = 0, binding = 1) readonly buffer WBuf    { float d[]; } wb;
+layout(set = 0, binding = 2) buffer       OutBuf     { float d[]; } ob;
+
+layout(push_constant) uniform PC {
+    uint  N;
+    float eps;
+} pc;
+
+shared float sdata[256];
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint N   = pc.N;
+
+    /* Each thread accumulates sum-of-squares over its stripe. */
+    float ss = 0.0;
+    for (uint i = tid; i < N; i += 256u)
+        ss += xb.d[i] * xb.d[i];
+
+    sdata[tid] = ss;
+    barrier();
+
+    /* Parallel reduction down to sdata[0]. */
+    for (uint s = 128u; s > 0u; s >>= 1u) {
+        if (tid < s) sdata[tid] += sdata[tid + s];
+        barrier();
+    }
+
+    /* Compute scale: 1 / sqrt(mean(x^2) + eps). */
+    float scale = inversesqrt(sdata[0] / float(N) + pc.eps);
+
+    /* Apply: out[i] = x[i] * scale * weight[i]. */
+    for (uint i = tid; i < N; i += 256u)
+        ob.d[i] = xb.d[i] * scale * wb.d[i];
+}

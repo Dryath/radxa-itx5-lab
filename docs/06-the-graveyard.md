@@ -28,7 +28,8 @@ from software. **Do not chain dispatches.** Use TP3 + M-batching instead
 ~500 µs launch overhead each, a local size of 64 on an 80-core GPU, and fp32 K/V. And the
 reframe that made it moot: **attention is only ~5% of per-token wall** at typical positions
 anyway. (Shader kept around for a possible long-context future >500 tokens, but it's not the
-lever.)
+lever.) The working Vulkan implementation — sgemm/attn/rms_norm/rope/swiglu shaders for the
+Mali-G610, with the UMA zero-copy trick — is in [`gpu/`](../gpu/), honest result and all.
 
 ## ☠️ Speculative decoding
 
