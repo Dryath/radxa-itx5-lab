@@ -62,6 +62,11 @@ Perplexity cost is real and worth knowing (Qwen3-30B-A3B Q4_0): W8A8 top-8 **3.5
 top-4 (deployed) **4.0619**; W4A4 per-channel top-4 **4.2669 (+5.0%)**; W4A4 *per-block* top-4
 **5.8114 (+43.1%)** — the per-channel scales are what make 4-bit attention usable at all.
 
+The W4A4 pipeline that produces this — Hadamard rotation baked into the weight bank, symmetric
+per-kernel scales, RK3588 packing, and the perplexity/probe harness — is in
+[`tools/w4a4/`](../tools/w4a4/), with a README that doesn't flinch about the half-kernel fault it
+never fully fixed.
+
 ## What actually runs (single board unless noted; PP=prefill, TG=decode, t/s)
 
 | Model | Quant (size) | PP | TG |
