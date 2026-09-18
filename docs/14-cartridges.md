@@ -41,6 +41,11 @@ the deterministic-solver / symbolic side earns its place versus just prompting t
 are measured one domain at a time. What's settled is the *shape*: on a small board, **a resident
 base + hot-swappable adapters** beats one monolith you can't afford to keep loaded.
 
+**Reference scaffold:** [`reference/cartridges/`](../reference/cartridges/) has a clean-room
+`train_cartridge.py` (train one domain LoRA adapter, base untouched) and `hotswap.py` (hold the base
+resident, swap adapters per request). It needs `peft`/`transformers`; it's the correct shape to
+start from, and it ships **no domain data** — you bring your own corpus.
+
 ---
 
 ← Back to the [README](../README.md).

@@ -465,6 +465,12 @@ And the thesis, one more time, because it's the through-line of this whole repo:
 vendor. We're not building from the vendor stack, and "how does this compare to the vendor's thing"
 isn't the target — reaching for that comparison is itself the drift signal. Build for the silicon.
 
+**A legibility toy:** [`reference/grafting/associative_bank.py`](../reference/grafting/associative_bank.py)
+is a clean-room ~80-line numpy illustration of the *mechanism* — a Hebbian + k-WTA bank that binds
+several modalities and evokes the others from a single cue (88% cross-modal recall vs 2% chance in
+its demo). It is **not** the substrate and **not** a claim that any of this is built — just the idea,
+made runnable.
+
 ---
 
 ← Back to the [README](../README.md). This one's a live direction, not a finished result — if any of
