@@ -88,6 +88,12 @@ The concrete shapes behind the above, all cheap enough for a single board:
 None of this needs a big model. It needs the *right two stores*, a write rule with teeth, and
 the discipline to do the expensive work while the board sleeps.
 
+**Runnable code:** [`reference/memory/`](../reference/memory/) has clean-room implementations of
+both halves — `episodic_store.py` (ring buffer + kNN recall + consolidation/decay + versioned
+save) and `recurring_identity.py` (promote-on-recurrence). numpy only, each runs standalone. They
+were written fresh from the principles above (not lifted from any engine — see the note there), so
+the patterns are usable without any project baggage.
+
 ---
 
 Next: [13 — The appliance](13-the-appliance.md) — where all of this actually runs.

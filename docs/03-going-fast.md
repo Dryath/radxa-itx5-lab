@@ -41,7 +41,8 @@ order of magnitude past 32. Two things fall out of measuring it properly:
 **The shape locks at K=2048, M=144, N ≥ 4608** (~76% of peak in a single dispatch), int8 with a
 Hadamard transform. A cost model this clean — predicted 1696 µs at K=3072/N=9216/M=160, measured
 **1695 µs** — means you can *choose* the shape before you run it. (One oddity worth knowing: M=128
-is anomalously bad; M=144 recovers. Don't assume monotonic.)
+is anomalously bad; M=144 recovers. Don't assume monotonic.) The probe code that measures this
+whole curve is in [`tools/npu-probes/`](../tools/npu-probes/).
 
 ## Lever 2 — 3-core tensor parallelism (TP3)
 
